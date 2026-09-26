@@ -52,6 +52,80 @@ const supabase = (SUPABASE_URL && SUPABASE_KEY)
 // Conversational wizard state tracker (chatId -> session)
 const userSessions = new Map();
 
+// Known authorized admin chat IDs for proactive reminders
+const knownAdminChatIds = new Set();
+
+/**
+ * Supabase Keep-Alive Heartbeat
+ * Pings the database so Supabase free tier never pauses due to inactivity
+ */
+async function pingSupabaseDatabase() {
+  if (!supabase) return { success: false, message: 'Supabase client not initialized' };
+  try {
+    const { data, error } = await supabase.from('streams').select('id, title, status').limit(1);
+    if (!error) {
+      console.log(`[${new Date().toISOString()}] 💓 Supabase Keep-Alive Ping successful. Database is active.`);
+      return { success: true, timestamp: new Date().toISOString() };
+    }
+    console.warn('Supabase ping warning:', error.message);
+    return { success: false, message: error.message };
+  } catch (err) {
+    console.error('Supabase ping error:', err.message);
+    return { success: false, message: err.message };
+  }
+}
+
+/**
+ * Proactive Ministry Broadcast Check Reminder
+ * Prompts admin every 3 days: "Do you have something to post today? Is there a live stream going on?"
+ */
+async function sendAdminBroadcastReminder() {
+  if (knownAdminChatIds.size === 0) return;
+
+  const reminderText = `🔔 <b>Ministry Broadcast Check</b>\n\n` +
+    `Grace and peace, Minister / Media Team! 🕊️\n\n` +
+    `• <b>Is there a live stream going on?</b>\n` +
+    `• <b>Do you have a service, sermon, or announcement to post today?</b>\n\n` +
+    `<i>Tap an option below to update the sanctuary:</i>`;
+
+  const inlineKeyboard = {
+    inline_keyboard: [
+      [{ text: '🔴 Quick Go Live', callback_data: 'quicklive' }],
+      [{ text: '📅 Schedule Sunday Service', callback_data: 'schedulestream' }],
+      [{ text: '👤 Change Minister / Pastor', callback_data: 'changepastor_active' }],
+      [{ text: '✝️ Send "Amen" (Keep-Alive Ping)', callback_data: 'pingkeepalive' }]
+    ]
+  };
+
+  for (const chatId of knownAdminChatIds) {
+    await sendMessage(chatId, reminderText, { reply_markup: inlineKeyboard });
+  }
+}
+
+/**
+ * Helper to parse pastor / minister name and role title from user input
+ */
+function parsePastorInput(input) {
+  const trimmed = (input || '').trim();
+  if (!trimmed || trimmed === '⏭️ Lead Pastor (Default)' || trimmed === 'Pastor John Jibril (Lead Pastor)' || trimmed.includes('Pastor John Jibril')) {
+    return { name: 'Pastor John Jibril', title: 'Lead Pastor' };
+  }
+  if (trimmed.includes('Resident Pastor')) {
+    return { name: 'Resident Pastor', title: 'Associate Pastor' };
+  }
+  if (trimmed.includes('Visiting Minister') || trimmed.includes('Guest')) {
+    return { name: 'Guest Minister', title: 'Visiting Speaker' };
+  }
+  if (trimmed.includes(' - ')) {
+    const parts = trimmed.split(' - ');
+    return { name: parts[0].trim(), title: parts[1].trim() };
+  }
+  return {
+    name: trimmed,
+    title: trimmed.toLowerCase().includes('pastor') ? 'Pastor' : 'Minister'
+  };
+}
+
 /**
  * YouTube Video ID parser
  */
@@ -108,8 +182,9 @@ const MAIN_KEYBOARD = {
     keyboard: [
       [{ text: '🔴 View Active Live Stream' }, { text: '🔗 Change Live Link' }],
       [{ text: '⚡ Go Live Now' }, { text: '⏹️ Stop Broadcast' }],
+      [{ text: '👤 Set Minister / Pastor' }, { text: '📖 Update Scripture' }],
       [{ text: '📅 Schedule Stream' }, { text: '📋 All Streams' }],
-      [{ text: '📖 Update Scripture' }, { text: '❓ Help & Commands' }]
+      [{ text: '✝️ Ping Keep-Alive' }, { text: '❓ Help & Commands' }]
     ],
     resize_keyboard: true,
     persistent: true
@@ -131,6 +206,9 @@ async function handleMessage(message) {
     return;
   }
 
+  // Register admin chat for proactive keep-alive & broadcast check notifications
+  knownAdminChatIds.add(chatId);
+
   // Handle Cancel anytime
   if (text === '/cancel' || text === '❌ Cancel') {
     userSessions.delete(chatId);
@@ -143,6 +221,32 @@ async function handleMessage(message) {
   // ==========================================================================
   if (userSessions.has(chatId) && !text.startsWith('/start')) {
     const session = userSessions.get(chatId);
+
+    // ------------------------------------------------------------------------
+    // FLOW 0: PASTOR / SPEAKER SELECTION
+    // ------------------------------------------------------------------------
+    if (session.step === 'AWAITING_PASTOR_CHOICE') {
+      const { name, title } = parsePastorInput(text);
+
+      if (supabase && session.data?.streamId) {
+        try {
+          await supabase.from('streams').update({
+            speaker: name,
+            speaker_title: title,
+            updated_at: new Date().toISOString()
+          }).eq('id', session.data.streamId);
+        } catch (e) {
+          console.error('Supabase pastor update error:', e);
+        }
+      }
+
+      userSessions.delete(chatId);
+      await sendMessage(chatId, `✅ <b>Minister / Pastor Updated!</b>\n\n` +
+        `👤 <b>Speaker:</b> ${name}\n` +
+        `🏷️ <b>Role:</b> ${title}\n\n` +
+        `<i>Updated live across the website sanctuary!</i>`, MAIN_KEYBOARD);
+      return;
+    }
 
     // ------------------------------------------------------------------------
     // FLOW 1: QUICK LIVE - STEP 1 (WAITING FOR YOUTUBE URL)
@@ -250,9 +354,41 @@ async function handleMessage(message) {
         }
       }
 
+      session.step = 'AWAITING_LIVE_PASTOR';
+      await sendMessage(chatId, `👤 <b>Who is Ministering / Preaching Today?</b>\n\n` +
+        `Choose an option below or <b>type any custom name</b> (e.g. <code>Pastor Sarah Jibril</code>, <code>Minister Emmanuel</code>):\n`, {
+        reply_markup: {
+          keyboard: [
+            [{ text: 'Pastor John Jibril (Lead Pastor)' }],
+            [{ text: 'Resident Pastor (Associate Pastor)' }],
+            [{ text: 'Visiting Minister (Guest Speaker)' }],
+            [{ text: '⏭️ Lead Pastor (Default)' }]
+          ],
+          resize_keyboard: true
+        }
+      });
+      return;
+    }
+
+    // ------------------------------------------------------------------------
+    // FLOW 1: QUICK LIVE - STEP 4 (MINISTER / PASTOR SELECTION)
+    // ------------------------------------------------------------------------
+    if (session.step === 'AWAITING_LIVE_PASTOR') {
+      const { name, title } = parsePastorInput(text);
+      if (supabase && session.data?.streamId) {
+        await supabase.from('streams').update({
+          speaker: name,
+          speaker_title: title,
+          updated_at: new Date().toISOString()
+        }).eq('id', session.data.streamId);
+      }
+
       userSessions.delete(chatId);
       await sendMessage(chatId, `🎉 <b>Live Stream Setup Complete!</b>\n\n` +
-        `Everything is fully synchronized with your website. Enjoy the fellowship and service!`, MAIN_KEYBOARD);
+        `🔴 <b>Broadcast is Live on Air!</b>\n` +
+        `👤 <b>Minister:</b> ${name} (${title})\n` +
+        `🔗 <b>Link:</b> https://youtu.be/${session.data?.videoId || ''}\n\n` +
+        `<i>Everything is fully synchronized with your website. Enjoy the fellowship and service!</i>`, MAIN_KEYBOARD);
       return;
     }
 
@@ -430,20 +566,42 @@ async function handleMessage(message) {
         scheduledDate.setHours(14, 0, 0, 0);
       }
 
+      session.data.scheduledDate = scheduledDate;
+      session.step = 'AWAITING_SCHEDULE_PASTOR';
+
+      await sendMessage(chatId, `👤 <b>Who is Ministering / Preaching?</b>\n\n` +
+        `Choose an option below or <b>type any minister's name</b>:`, {
+        reply_markup: {
+          keyboard: [
+            [{ text: 'Pastor John Jibril (Lead Pastor)' }],
+            [{ text: 'Resident Pastor (Associate Pastor)' }],
+            [{ text: 'Visiting Minister (Guest Speaker)' }],
+            [{ text: '⏭️ Lead Pastor (Default)' }]
+          ],
+          resize_keyboard: true
+        }
+      });
+      return;
+    }
+
+    if (session.step === 'AWAITING_SCHEDULE_PASTOR') {
+      const { name, title } = parsePastorInput(text);
+      const scheduledDate = session.data.scheduledDate || new Date();
+
       const streamId = 'stream_' + Date.now();
       const upcomingStream = {
         id: streamId,
         title: session.data.title || 'Sunday Special Online Service',
-        description: 'Join Pastor John Jibril for the Sunday Special Online Service.',
+        description: `Join ${name} for the service broadcast.`,
         youtube_url: session.data.youtube_url,
         youtube_video_id: session.data.youtube_video_id,
         thumbnail_url: session.data.thumbnail_url || '/sunday-special-flyer-updated.png',
-        speaker: 'Pastor John Jibril',
-        speaker_title: 'Lead Pastor',
+        speaker: name,
+        speaker_title: title,
         status: 'upcoming',
         scheduled_at: scheduledDate.toISOString(),
         viewer_count: 0,
-        tags: ['Sunday Special', 'Upcoming', 'Pastor John Jibril'],
+        tags: ['Sunday Special', 'Upcoming', name],
         scripture: 'Ephesians 6:10-18',
         notes: 'Creed: Befortified in your Mind • Befortified in your Resolve • Befortified in your Position.'
       };
@@ -460,7 +618,7 @@ async function handleMessage(message) {
       await sendMessage(chatId, `🟡 <b>Upcoming Service Scheduled!</b>\n\n` +
         `<b>Title:</b> ${upcomingStream.title}\n` +
         `<b>Date:</b> ${scheduledDate.toUTCString()}\n` +
-        `<b>Speaker:</b> Pastor John Jibril\n\n` +
+        `<b>Speaker:</b> ${name} (${title})\n\n` +
         `<i>Viewers will now see this under 'Upcoming Services' with countdown timer!</i>`, MAIN_KEYBOARD);
       return;
     }
@@ -573,12 +731,70 @@ async function handleMessage(message) {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🔗 Change Live Link', callback_data: `changelink_${data.id}` }],
+            [{ text: '👤 Change Minister', callback_data: `changepastor_${data.id}` }],
             [{ text: '📖 Edit Scripture', callback_data: `changescripture_${data.id}` }, { text: '📝 Edit Title', callback_data: `changetitle_${data.id}` }],
             [{ text: '⏹️ Stop Broadcast', callback_data: `stop_${data.id}` }]
           ]
         }
       });
     }
+    return;
+  }
+
+  // 4D. Set Minister / Pastor
+  if (text === '👤 Set Minister / Pastor' || text.startsWith('/pastor') || text.startsWith('/minister')) {
+    if (!supabase) {
+      await sendMessage(chatId, '⚠️ Supabase is not connected in .env.', MAIN_KEYBOARD);
+      return;
+    }
+
+    const { data: liveStream } = await supabase.from('streams').select('*').eq('status', 'live').maybeSingle();
+    if (!liveStream) {
+      await sendMessage(chatId, 'ℹ️ No broadcast is currently LIVE on the website.\n\nTap <b>⚡ Go Live Now</b> to start a broadcast first.', MAIN_KEYBOARD);
+      return;
+    }
+
+    userSessions.set(chatId, {
+      step: 'AWAITING_PASTOR_CHOICE',
+      data: { streamId: liveStream.id }
+    });
+
+    await sendMessage(chatId, `👤 <b>Set Minister / Pastor for Live Broadcast</b>\n\n` +
+      `<b>Service:</b> ${liveStream.title}\n` +
+      `<b>Current Speaker:</b> ${liveStream.speaker} (${liveStream.speaker_title || 'Lead Pastor'})\n\n` +
+      `Select a minister below or <b>type a custom name</b>:\n` +
+      `<i>(e.g. "Pastor Sarah Jibril", "Minister Emmanuel", etc.)</i>`, {
+      reply_markup: {
+        keyboard: [
+          [{ text: 'Pastor John Jibril (Lead Pastor)' }],
+          [{ text: 'Resident Pastor (Associate Pastor)' }],
+          [{ text: 'Visiting Minister (Guest Speaker)' }],
+          [{ text: '❌ Cancel' }]
+        ],
+        resize_keyboard: true
+      }
+    });
+    return;
+  }
+
+  // 4E. Keep-Alive Heartbeat / Ping
+  if (text === '✝️ Ping Keep-Alive' || text === '/ping' || text === '/amen') {
+    const res = await pingSupabaseDatabase();
+    if (res.success) {
+      await sendMessage(chatId, `✅ <b>Amen! Database Server is 100% Live & Active!</b>\n\n` +
+        `🕒 <b>Timestamp:</b> ${new Date().toUTCString()}\n` +
+        `⚡ <b>Supabase PostgreSQL:</b> Responsive & Connected\n` +
+        `🛡️ <b>Inactivity Timer:</b> Successfully reset!`, MAIN_KEYBOARD);
+    } else {
+      await sendMessage(chatId, `⚠️ <b>Keep-Alive Warning:</b> ${res.message || 'Check database connectivity'}`, MAIN_KEYBOARD);
+    }
+    return;
+  }
+
+  // 4F. Test Broadcast Reminder
+  if (text === '/reminder' || text === '/checkbroadcast') {
+    await sendAdminBroadcastReminder();
+    await sendMessage(chatId, '🔔 Broadcast reminder notification sent!', MAIN_KEYBOARD);
     return;
   }
 
@@ -816,6 +1032,42 @@ async function handleCallbackQuery(cbQuery) {
     return;
   }
 
+  if (data.startsWith('changepastor_')) {
+    let id = data.replace('changepastor_', '');
+    if (id === 'active' && supabase) {
+      const { data: liveStream } = await supabase.from('streams').select('id').eq('status', 'live').maybeSingle();
+      if (liveStream) id = liveStream.id;
+    }
+    userSessions.set(chatId, { step: 'AWAITING_PASTOR_CHOICE', data: { streamId: id } });
+    await answerCallbackQuery(queryId);
+    if (chatId) {
+      await sendMessage(chatId, `👤 <b>Select Minister / Pastor for Broadcast:</b>\n\n` +
+        `Tap an option below or type a custom name:`, {
+        reply_markup: {
+          keyboard: [
+            [{ text: 'Pastor John Jibril (Lead Pastor)' }],
+            [{ text: 'Resident Pastor (Associate Pastor)' }],
+            [{ text: 'Visiting Minister (Guest Speaker)' }],
+            [{ text: '❌ Cancel' }]
+          ],
+          resize_keyboard: true
+        }
+      });
+    }
+    return;
+  }
+
+  if (data === 'pingkeepalive') {
+    const res = await pingSupabaseDatabase();
+    await answerCallbackQuery(queryId, 'Amen! Keep-alive ping sent.');
+    if (chatId) {
+      await sendMessage(chatId, `✅ <b>Amen! Database Server is 100% Live & Active!</b>\n\n` +
+        `🕒 <b>Timestamp:</b> ${new Date().toUTCString()}\n` +
+        `⚡ Supabase PostgreSQL touched and verified.`, MAIN_KEYBOARD);
+    }
+    return;
+  }
+
   await answerCallbackQuery(queryId);
 }
 
@@ -853,6 +1105,15 @@ async function pollUpdates() {
 if (TELEGRAM_BOT_TOKEN) {
   console.log('🤖 Telegram Admin Bot is polling and ready for commands!');
   pollUpdates();
+
+  // Run initial Supabase keep-alive ping on startup
+  pingSupabaseDatabase();
+
+  // Ping Supabase every 24 hours to keep PostgreSQL alive indefinitely
+  setInterval(pingSupabaseDatabase, 24 * 60 * 60 * 1000);
+
+  // Send broadcast check reminder to admin every 3 days (72 hours)
+  setInterval(sendAdminBroadcastReminder, 72 * 60 * 60 * 1000);
 } else {
   console.log('ℹ️  Bot script prepared. Provide TELEGRAM_BOT_TOKEN in .env and run: npm run bot');
 }

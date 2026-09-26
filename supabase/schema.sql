@@ -153,16 +153,16 @@ INSERT INTO public.streams (
 ) VALUES 
 (
   'stream-live-sunday-special',
-  'Sunday Special Online Service: Fortified in Mind, Resolve & Position',
+  'Sunday Special Online Service: Live Broadcast',
   'Welcome to the Sunday Special Online Service with Pastor John Jibril! Join our live broadcast as we receive divine fortification for our minds, unshakable resolve in faith, and steadfast standing in Christ Jesus.',
-  'https://www.youtube.com/watch?v=kJQP7kiw5Fk',
-  'kJQP7kiw5Fk',
+  'https://www.youtube.com/watch?v=RHUauMcYlX0',
+  'RHUauMcYlX0',
   '/sunday-special-flyer-updated.png',
   'Pastor John Jibril',
   'Lead Pastor',
   'live',
   now(),
-  240,
+  1,
   ARRAY['Sunday Special', 'Live Broadcast', 'Pastor John Jibril', 'Fortification'],
   'Ephesians 6:10-18',
   'Creed: Befortified in your Mind • Befortified in your Resolve • Befortified in your Position.'

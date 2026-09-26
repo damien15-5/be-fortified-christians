@@ -2,25 +2,8 @@ import type { Stream, StreamStatus } from '../types/stream';
 import { getSupabaseClient } from './supabase';
 import { extractYouTubeId, getYouTubeThumbnail } from './youtube';
 
-// Initial high-quality starter stream for Be Fortified Christians
-export const INITIAL_STREAMS: Stream[] = [
-  {
-    id: 'stream-sunday-special-01',
-    title: 'Sunday Special Online Service: Befortified in Mind, Resolve & Position',
-    description: 'Join Pastor John Jibril for the Sunday Special broadcast! Experience the fortified presence of God, prophetic impartation, and divine alignment. Streaming live every Sunday at 2:00PM (GMT+1).',
-    youtube_url: 'https://www.youtube.com/watch?v=kJQP7kiw5Fk',
-    youtube_video_id: 'kJQP7kiw5Fk',
-    thumbnail_url: '/sunday-special-flyer-updated.png',
-    speaker: 'Pastor John Jibril',
-    speaker_title: 'Lead Pastor & Founder',
-    status: 'live',
-    scheduled_at: new Date().toISOString(),
-    viewer_count: 2480,
-    tags: ['Sunday Special', 'Pastor John Jibril', 'Befortified', 'Prophetic'],
-    scripture: 'Ephesians 6:10, 1 Corinthians 15:58',
-    notes: 'Key Pillars: 1. Befortified in your mind. 2. Befortified in your resolve. 3. Befortified in your position.'
-  }
-];
+// Initial streams: empty so website reflects live Supabase database streams
+export const INITIAL_STREAMS: Stream[] = [];
 
 const LOCAL_STORAGE_KEY = 'bf_streams_v1';
 
@@ -97,7 +80,7 @@ export const StreamService = {
     scripture?: string;
     notes?: string;
   }): Promise<Stream> {
-    const videoId = extractYouTubeId(input.youtube_url) || 'kJQP7kiw5Fk';
+    const videoId = extractYouTubeId(input.youtube_url) || '';
     const thumb = input.thumbnail_url || getYouTubeThumbnail(videoId);
 
     const newStream: Stream = {

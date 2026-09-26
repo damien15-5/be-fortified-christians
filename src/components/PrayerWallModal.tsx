@@ -10,29 +10,7 @@ interface PrayerWallModalProps {
   onPrayFor?: (id: string) => void;
 }
 
-export const INITIAL_PRAYERS: PrayerRequest[] = [
-  {
-    id: 'p-1',
-    name: 'Sister Grace O.',
-    request: 'Praying for healing and divine restoration in my mother’s body following medical diagnosis. Standing on Isaiah 53:5!',
-    created_at: '2 hours ago',
-    praying_count: 34
-  },
-  {
-    id: 'p-2',
-    name: 'Brother David & Family',
-    request: 'Trusting God for divine open doors in career and visa breakthrough this month. Thank You Jesus for answered prayers.',
-    created_at: '5 hours ago',
-    praying_count: 48
-  },
-  {
-    id: 'p-3',
-    name: 'Minister Samuel T.',
-    request: 'Praising God for salvation in our community youth outreach! Praying for spiritual fortitude and steadfastness in Christ.',
-    created_at: '1 day ago',
-    praying_count: 62
-  }
-];
+export const INITIAL_PRAYERS: PrayerRequest[] = [];
 
 export const PrayerWallModal: React.FC<PrayerWallModalProps> = ({
   isOpen,
@@ -146,9 +124,19 @@ export const PrayerWallModal: React.FC<PrayerWallModalProps> = ({
           </h4>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            {prayerList.map(p => (
-              <div
-                key={p.id}
+            {prayerList.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 16px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px dashed var(--border-subtle)' }}>
+                <p style={{ color: 'var(--blue-900)', fontWeight: 600, fontSize: '0.95rem', marginBottom: '6px' }}>
+                  No prayer requests posted yet
+                </p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>
+                  Be the first to share your petition above. Our ministry family will stand with you in faith!
+                </p>
+              </div>
+            ) : (
+              prayerList.map(p => (
+                <div
+                  key={p.id}
                 style={{
                   background: 'white',
                   border: '1px solid var(--border-subtle)',
@@ -181,7 +169,8 @@ export const PrayerWallModal: React.FC<PrayerWallModalProps> = ({
                   </button>
                 </div>
               </div>
-            ))}
+            ))
+            )}
           </div>
         </div>
       </div>

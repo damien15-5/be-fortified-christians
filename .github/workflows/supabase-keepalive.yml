@@ -1,0 +1,25 @@
+name: Supabase Database Keep-Alive
+
+on:
+  schedule:
+    # Run every 3 days at 08:00 UTC (well before Supabase 7-day inactivity pause)
+    - cron: '0 8 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  ping-database:
+    name: Ping Supabase PostgreSQL
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Keep-Alive Ping to Supabase
+        run: |
+          echo "Sending keep-alive request to Be Fortified Christians Supabase..."
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "apikey: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhzc256d29pcmphcHB2emp5eXZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0NTIyOTAsImV4cCI6MjEwNjAyODI5MH0.P391qPzhCBXWfF2V6t660g1ADTBLhM6cWxflbePyeNg' }}" \
+            "https://xssnzwoirjappvzjyyvk.supabase.co/rest/v1/streams?select=id,title&limit=1")
+          echo "Supabase response code: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ Supabase database is active and awake!"
+          else
+            echo "⚠️ Unexpected status code: $HTTP_STATUS"
+          fi

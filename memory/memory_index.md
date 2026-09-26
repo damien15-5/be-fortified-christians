@@ -24,6 +24,7 @@ This document catalogs all memories and architectural decisions created for the 
 | 016 | 2026-09-26 | [016_remove_floating_player_action_buttons.md](file:///c:/Users/user/Desktop/be_fortified%20christains/memory/016_remove_floating_player_action_buttons.md) | Removed floating `Open on YouTube` and `Show Flyer` pill overlays from the cinema video player for a clean, distraction-free stream. |
 | 017 | 2026-09-26 | [017_fullscreen_cinema_mode_and_overlay_cleanup.md](file:///c:/Users/user/Desktop/be_fortified%20christains/memory/017_fullscreen_cinema_mode_and_overlay_cleanup.md) | Fixed Fullscreen / Cinema mode button with dual HTML5 Fullscreen API + CSS theater mode expansion, dynamic 16:9 iframe scaling, and synchronized ESC key handling. |
 | 018 | 2026-09-26 | [018_deployment_configuration_and_github_push.md](file:///c:/Users/user/Desktop/be_fortified%20christains/memory/018_deployment_configuration_and_github_push.md) | Prepared deployment configurations (Vercel, Netlify, Render Procfile, README), created GitHub repo `damien15-5/be-fortified-christians`, and pushed production codebase cleanly. |
+| 019 | 2026-09-27 | [019_mobile_layout_exact_presence_and_minister_selection.md](file:///c:/Users/user/Desktop/be_fortified%20christains/memory/019_mobile_layout_exact_presence_and_minister_selection.md) | Fixed mobile player header collision and cleared flyer overlay; added Supabase Realtime presence tracking, universal chat & prayers, pastor/minister selection across Telegram CMS, and 24/7 keep-alive heartbeat. |
 
 
 

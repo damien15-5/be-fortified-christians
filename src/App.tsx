@@ -5,10 +5,12 @@ import { Navbar } from './components/Navbar';
 import { HeroLiveStream } from './components/HeroLiveStream';
 import { UpcomingSection } from './components/UpcomingSection';
 import { PreviousArchive } from './components/PreviousArchive';
-import { PrayerWallModal, INITIAL_PRAYERS } from './components/PrayerWallModal';
+import { PrayerWallModal } from './components/PrayerWallModal';
 import { GivingModal } from './components/GivingModal';
 import { Footer } from './components/Footer';
 import { MobileBottomNav } from './components/MobileBottomNav';
+
+import { getSupabaseClient } from './lib/supabase';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<'home' | 'live' | 'upcoming' | 'previous'>('home');
@@ -18,47 +20,88 @@ export function App() {
   const [isGivingOpen, setIsGivingOpen] = useState(false);
   const [isPrayerOpen, setIsPrayerOpen] = useState(false);
 
-  // Synchronized community prayer requests
-  const [prayers, setPrayers] = useState<PrayerRequest[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('bf_prayers_v1');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch {
-          // fallback
+  // Synchronized universal prayer requests
+  const [prayers, setPrayers] = useState<PrayerRequest[]>([]);
+
+  // Fetch real prayer requests from Supabase and subscribe to Realtime
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    supabase
+      .from('prayer_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setPrayers(data as PrayerRequest[]);
         }
-      }
-    }
-    return INITIAL_PRAYERS;
-  });
+      });
+
+    const prayerSub = supabase
+      .channel('realtime-prayers-channel')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'prayer_requests' },
+        (payload) => {
+          const newP = payload.new as PrayerRequest;
+          setPrayers(prev => [newP, ...prev.filter(p => p.id !== newP.id)]);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'prayer_requests' },
+        (payload) => {
+          const updatedP = payload.new as PrayerRequest;
+          setPrayers(prev => prev.map(p => p.id === updatedP.id ? updatedP : p));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(prayerSub);
+    };
+  }, []);
 
   const handleAddPrayer = (name: string, request: string) => {
-    const newPrayer: PrayerRequest = {
+    const cleanName = name.trim() || 'Online Believer';
+    const cleanReq = request.trim();
+    if (!cleanReq) return;
+
+    const tempPrayer: PrayerRequest = {
       id: 'p-' + Date.now(),
-      name: name.trim() || 'Online Believer',
-      request: request.trim(),
+      name: cleanName,
+      request: cleanReq,
       created_at: 'Just now',
       praying_count: 1
     };
 
-    setPrayers(prev => {
-      const updated = [newPrayer, ...prev];
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('bf_prayers_v1', JSON.stringify(updated));
-      }
-      return updated;
-    });
+    setPrayers(prev => [tempPrayer, ...prev]);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      supabase.from('prayer_requests').insert({
+        name: cleanName,
+        request: cleanReq,
+        praying_count: 1
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase prayer insert error:', error.message);
+      });
+    }
   };
 
   const handlePrayFor = (id: string) => {
     setPrayers(prev => {
       const updated = prev.map(p => p.id === id ? { ...p, praying_count: p.praying_count + 1 } : p);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('bf_prayers_v1', JSON.stringify(updated));
-      }
       return updated;
     });
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      const current = prayers.find(p => p.id === id);
+      const newCount = (current?.praying_count || 0) + 1;
+      supabase.from('prayer_requests').update({ praying_count: newCount }).eq('id', id).then();
+    }
   };
 
   const fetchStreams = async () => {

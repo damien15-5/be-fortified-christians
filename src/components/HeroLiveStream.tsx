@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { Stream, PrayerRequest } from '../types/stream';
 import { getYouTubeEmbedUrl, formatStreamDate, downloadCalendarInvite } from '../lib/youtube';
+import { getSupabaseClient } from '../lib/supabase';
 import { Radio, Users, Calendar, Share2, BookOpen, Maximize2, Minimize2, Check, Send, Play } from 'lucide-react';
 
 interface HeroLiveStreamProps {
@@ -25,27 +26,6 @@ interface FloatingEmoji {
   left: number;
   emoji: string;
 }
-
-const INITIAL_CHAT_MESSAGES: ChatMessage[] = [
-  {
-    id: 'c-1',
-    name: 'Sister Mary K.',
-    message: 'Amen! The Lord is our fortress and strength! 🙏',
-    timestamp: '2m ago'
-  },
-  {
-    id: 'c-2',
-    name: 'Brother Caleb',
-    message: 'Watching live from London. Standing in faith with Pastor John Jibril! 🔥',
-    timestamp: '1m ago'
-  },
-  {
-    id: 'c-3',
-    name: 'Grace O.',
-    message: 'Praying for total healing and restoration for all families today.',
-    timestamp: 'Just now'
-  }
-];
 
 function getStoredUserName(): string {
   if (typeof document !== 'undefined') {
@@ -81,22 +61,24 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
   onAddPrayer
 }) => {
   const [reactions, setReactions] = useState<{ [key: string]: number }>({
-    '❤️': 188,
-    '🙏': 288,
-    '🔥': 95,
-    '🙌': 173,
-    '✝️': 204
+    '❤️': 0,
+    '🙏': 0,
+    '🔥': 0,
+    '🙌': 0,
+    '✝️': 0
   });
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
-    const prayerMessages: ChatMessage[] = prayers.slice(0, 3).map(p => ({
+    return prayers.map(p => ({
       id: p.id,
       name: p.name,
       message: p.request,
       timestamp: p.created_at
     }));
-    return [...INITIAL_CHAT_MESSAGES, ...prayerMessages];
   });
+
+  const [activeViewers, setActiveViewers] = useState<number>(1);
+  const channelRef = useRef<any>(null);
 
   const [floatingEmojis, setFloatingEmojis] = useState<FloatingEmoji[]>([]);
   const [inputText, setInputText] = useState('');
@@ -129,6 +111,68 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
+
+  // Universal Realtime Fellowship: Exact Presence & Live Chat Broadcast
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    let visitorId = '';
+    if (typeof window !== 'undefined') {
+      visitorId = localStorage.getItem('bf_visitor_id') || '';
+      if (!visitorId) {
+        visitorId = 'visitor_' + Math.random().toString(36).substring(2, 9);
+        localStorage.setItem('bf_visitor_id', visitorId);
+      }
+    }
+
+    const channel = supabase.channel('stream-fellowship', {
+      config: {
+        presence: { key: visitorId || 'guest' }
+      }
+    });
+
+    channelRef.current = channel;
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const presenceState = channel.presenceState();
+        const total = Object.keys(presenceState).length;
+        setActiveViewers(Math.max(1, total));
+      })
+      .on('broadcast', { event: 'fellowship_chat' }, ({ payload }) => {
+        if (payload && payload.id) {
+          setChatMessages(prev => {
+            if (prev.some(m => m.id === payload.id)) return prev;
+            return [...prev, payload];
+          });
+          setTimeout(() => scrollChatFeedToBottom(), 50);
+        }
+      })
+      .on('broadcast', { event: 'fellowship_reaction' }, ({ payload }) => {
+        if (payload && payload.emoji) {
+          setReactions(prev => ({
+            ...prev,
+            [payload.emoji]: (prev[payload.emoji] || 0) + 1
+          }));
+          triggerFloatingEmoji(payload.emoji);
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          const storedName = getStoredUserName();
+          await channel.track({
+            online_at: new Date().toISOString(),
+            user_name: storedName || 'Fellow Believer'
+          });
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+      channelRef.current = null;
+    };
+  }, [stream?.id]);
 
   const handleToggleFullscreen = () => {
     const cardEl = document.getElementById('hero-theater-card');
@@ -229,6 +273,16 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
     };
 
     setChatMessages(prev => [...prev, reactionNotice]);
+
+    // Broadcast reaction universally to all connected viewers
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'fellowship_reaction',
+        payload: { emoji, sender }
+      }).catch?.(() => {});
+    }
+
     setTimeout(() => {
       scrollChatFeedToBottom();
     }, 50);
@@ -243,6 +297,15 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
     };
 
     setChatMessages(prev => [...prev, newChat]);
+
+    // Broadcast chat message universally to all connected viewers
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'fellowship_chat',
+        payload: newChat
+      }).catch?.(() => {});
+    }
 
     // Also register into global prayer wall!
     if (onAddPrayer) {
@@ -328,22 +391,24 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
           <div className="theater-top-left">
             {isLive ? (
               <span className="live-badge">
-                <span className="live-dot" /> LIVE STREAMING NOW
+                <span className="live-dot" />
+                <span className="live-badge-full">LIVE STREAMING NOW</span>
+                <span className="live-badge-short">LIVE</span>
               </span>
             ) : isUpcoming ? (
               <span className="badge-upcoming">
-                <Calendar size={14} /> UPCOMING BROADCAST
+                <Calendar size={14} /> UPCOMING
               </span>
             ) : (
               <span className="badge-ended">
-                ▶️ RECORDED SERVICE
+                ▶️ RECORDED
               </span>
             )}
 
-            {isLive && stream.viewer_count && (
+            {isLive && (
               <span className="viewer-counter">
                 <Users size={14} color="#DC2626" />
-                <span>{stream.viewer_count.toLocaleString()} watching</span>
+                <span>{activeViewers.toLocaleString()} watching</span>
               </span>
             )}
           </div>
@@ -355,7 +420,7 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
               title="Share Stream"
             >
               {copied ? <Check size={14} color="#16A34A" /> : <Share2 size={14} />}
-              <span>{copied ? 'Link Copied' : 'Share'}</span>
+              <span className="btn-text-mobile-hide">{copied ? 'Copied' : 'Share'}</span>
             </button>
 
             <button
@@ -364,7 +429,7 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
               title={theaterMode ? 'Exit Fullscreen' : 'Fullscreen / Cinema View'}
             >
               {theaterMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              <span>{theaterMode ? 'Exit' : 'Fullscreen'}</span>
+              <span className="btn-text-mobile-hide">{theaterMode ? 'Exit' : 'Fullscreen'}</span>
             </button>
           </div>
         </div>
@@ -388,17 +453,11 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
                 onClick={() => setIsPlaying(true)}
               >
                 <div className="video-poster-overlay">
-                  {isLive && (
-                    <span className="live-badge" style={{ marginBottom: '16px', boxShadow: '0 4px 14px rgba(220, 38, 38, 0.5)' }}>
-                      <span className="live-dot" /> LIVE STREAMING NOW
-                    </span>
-                  )}
-                  <div className="play-pulse-circle">
+                  <div className="play-pulse-circle" title="Tap to Play Broadcast">
                     <Play size={40} fill="white" color="white" style={{ marginLeft: '4px' }} />
                   </div>
-                  <h3 className="poster-title-text">{stream.title}</h3>
-                  <span className="poster-play-prompt">
-                    Click to Start Watching {isLive ? 'Live Service' : 'Broadcast'}
+                  <span className="poster-play-pill">
+                    ▶ Tap to Start Watching
                   </span>
                 </div>
               </div>
@@ -593,27 +652,38 @@ export const HeroLiveStream: React.FC<HeroLiveStreamProps> = ({
 
             {/* Live Chat & Prayer Feed */}
             <div className="live-chat-feed" ref={chatFeedRef}>
-              {chatMessages.map(msg => (
-                <div
-                  key={msg.id}
-                  className={`live-chat-item ${msg.isReaction ? 'is-reaction' : ''}`}
-                >
-                  {!msg.isReaction && (
-                    <div className="chat-avatar-bubble">
-                      {msg.name.slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="chat-content-col">
-                    <div className="chat-author-line">
-                      <span className="chat-author-name">{msg.name}</span>
-                      <span className="chat-timestamp">{msg.timestamp}</span>
-                    </div>
-                    <div className="chat-message-text">
-                      {msg.message}
+              {chatMessages.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '36px 16px', color: 'var(--text-muted)' }}>
+                  <p style={{ fontSize: '0.9rem', marginBottom: '6px', fontWeight: 600, color: 'var(--blue-900)' }}>
+                    Live Fellowship Chat
+                  </p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    Type an "Amen!", prayer, or tap an emoji above to join the fellowship!
+                  </p>
+                </div>
+              ) : (
+                chatMessages.map(msg => (
+                  <div
+                    key={msg.id}
+                    className={`live-chat-item ${msg.isReaction ? 'is-reaction' : ''}`}
+                  >
+                    {!msg.isReaction && (
+                      <div className="chat-avatar-bubble">
+                        {msg.name.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="chat-content-col">
+                      <div className="chat-author-line">
+                        <span className="chat-author-name">{msg.name}</span>
+                        <span className="chat-timestamp">{msg.timestamp}</span>
+                      </div>
+                      <div className="chat-message-text">
+                        {msg.message}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
 
             {/* Non-Blocking Chat & Prayer Input Form with ONE BIG SEND BUTTON */}
